@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>學生行為觀察與輔導紀錄系統</title>
+  <!-- 載入 React, ReactDOM, Babel 與 Tailwind CSS -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    @media print {
+      body * { visibility: hidden; }
+      #print-area, #print-area * { visibility: visible; }
+      #print-area { position: absolute; left: 0; top: 0; width: 100%; }
+      .no-print { display: none !important; }
+    }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useMemo } = React;
+
+    function App() {
+      const [activeTab, setActiveTab] = useState('record'); // 'record' | 'history' | 'students' | 'report'
+      
+      // 學生名單 LocalStorage 綁定
+      const [students, setStudents] = useState(() => {
+        const saved = localStorage.getItem('counseling_students');
+        return saved ? JSON.parse(saved) : [
+          { id: '1', number: '01', name: '陳小明', gender: '男' },
+          { id: '2', number: '02', name: '林小華', gender: '女' }
+        ];
+      });
+
+      // 輔導紀錄 LocalStorage 綁定
+      const [records, setRecords] = useState(() => {
+        const saved = localStorage.getItem('counseling_records');
+        return saved ? JSON.parse(saved) : [];
+      });
+
+      const [selectedStudentId, setSelectedStudentId] = useState('');
+      const [saveStatus, setSaveStatus] = useState('');
+
+      // 新增紀錄表單狀態
+      const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+      const [time, setTime] = useState('10:00');
+      const [setting, setSetting] = useState('課堂學習');
+      const [behavior, setBehavior] = useState('');
+      const [action, setAction] = useState('');
+      const [result, setResult] = useState('');
+      const [notes, setNotes] = useState('');
+
+      // 名單管理批量文字與編輯狀態
+      const [batchText, setBatchText] = useState('');
+      const [editingStudentId, setEditingStudentId] = useState(null);
+      const [editNumber, setEditNumber] = useState('');
+      const [editName, setEditName] = useState('');
+
+      // 歷史紀錄搜尋與篩選
+      const [searchQuery, setSearchQuery] = useState('');
+      const [filterSetting, setFilterSetting] = useState('全區');
+
+      useEffect(() => {
+        localStorage.setItem('counseling_students', JSON.stringify(students));
+      }, [students]);
+
+      useEffect(() => {
+        localStorage.setItem('counseling_records', JSON.stringify(records));
+      }, [records]);
+
+      useEffect(() => {
+        if (students.length > 0 && !selectedStudentId) {
+          setSelectedStudentId(students[0].id);
+        }
+      }, [students]);
+
+      const triggerSaveNotice = (msg) => {
+        setSaveStatus(msg);
+        setTimeout(() => setSaveStatus(''), 3000);
+      };
+
+      // 快捷標籤
+      const quickBehaviors = [
+        '離座走至講台前，模仿老師語句。',
+        '上課持續敲擊桌面/物品製造聲響，提醒無效。',
+        '午休無法休息，在教室內丟擲物品。',
+        '與同儕發生言語衝突，情緒較高漲。',
+        '上課無法專注超過10分鐘，易受外界吸引。'
+      ];
+
+      const quickActions = [
+        '採非語言肢體手勢（靜音手勢）提示。',
+        '鋪設桌面防滑軟墊以降低打擊噪音。',
+        '安排發放作業/拿教具之課堂合法動態任務。',
+        '提供靜態感覺統合玩具（舒壓球/著色頁）舒緩情緒。',
+        '安排離座緩和區進行短暫情緒調節。'
+      ];
+
+      // 新增紀錄
+      const handleAddRecord = (e) => {
+        e.preventDefault();
+        if (!behavior) return alert('請填寫具體行為描述');
+        if (!selectedStudentId) return alert('請先選擇學生');
+
+        const newRecord = {
+          id: Date.now().toString(),
+          studentId: selectedStudentId,
+          date, time, setting, behavior, action, result, notes
+        };
+
+        setRecords([newRecord, ...records]);
+        setBehavior(''); setAction(''); setResult(''); setNotes('');
+        triggerSaveNotice('✓ 紀錄已儲存至本機');
+      };
+
+      // 刪除單筆紀錄
+      const handleDeleteRecord = (id) => {
+        if (confirm('確定要刪除這筆輔導紀錄嗎？')) {
+          setRecords(records.filter(r => r.id !== id));
+          triggerSaveNotice('✓ 已刪除該筆紀錄');
+        }
+      };
+
+      // 批量匯入學生名單 (防重複機制)
+      const handleParseBatch = () => {
+        if (!batchText.trim()) return alert('請輸入名單內容');
+        const lines = batchText.split('\n');
+        const parsedMap = new Map();
+
+        lines.forEach((line) => {
+          const trimmed = line.trim();
+          if (!trimmed) return;
+          const parts = trimmed.split(/[\t\s]+/);
+          if (parts.length >= 2) {
+            let num = parts[0].padStart(2, '0');
+            let name = parts[1];
+            let gender = parts[2] || '未定';
+            parsedMap.set(num, {
+              id: Date.now().toString() + Math.random().toString(36).substr(2, 4),
+              number: num,
+              name: name,
+              gender: gender
+            });
+          }
+        });
+
+        const newStudentList = Array.from(parsedMap.values()).sort((a, b) => a.number.localeCompare(b.number));
+
+        if (newStudentList.length === 0) return alert('格式不合，請確保每行格式為：座號 姓名');
+
+        if (confirm(`確定要匯入 ${newStudentList.length} 位學生並更新現有名單嗎？`)) {
+          setStudents(newStudentList);
+          if (newStudentList.length > 0) setSelectedStudentId(newStudentList[0].id);
+          setBatchText('');
+          triggerSaveNotice('✓ 名單更新完成（已自動排序與去重）');
+        }
+      };
+
+      // 開始編輯單一學生
+      const handleStartEditStudent = (s) => {
+        setEditingStudentId(s.id);
+        setEditNumber(s.number);
+        setEditName(s.name);
+      };
+
+      // 儲存單一學生編輯
+      const handleSaveEditStudent = (studentId) => {
+        const formattedNum = editNumber.trim().padStart(2, '0');
+        const formattedName = editName.trim();
+
+        if (!formattedNum || !formattedName) return alert('座號與姓名不能空白！');
+
+        // 檢查座號重複
+        const isDuplicate = students.some(s => s.id !== studentId && s.number === formattedNum);
+        if (isDuplicate) return alert(`座號 ${formattedNum} 已被其他學生使用，請確認後重新輸入！`);
+
+        const updated = students.map(s => {
+          if (s.id === studentId) {
+            return { ...s, number: formattedNum, name: formattedName };
+          }
+          return s;
+        }).sort((a, b) => a.number.localeCompare(b.number));
+
+        setStudents(updated);
+        setEditingStudentId(null);
+        triggerSaveNotice('✓ 學生資料修改成功');
+      };
+
+      // 刪除單一學生
+      const handleDeleteStudent = (studentId, studentName) => {
+        if (confirm(`確定要刪除「${studentName}」嗎？該學生的所有歷史輔導紀錄也會一併清除。`)) {
+          setStudents(students.filter(s => s.id !== studentId));
+          setRecords(records.filter(r => r.studentId !== studentId));
+          if (selectedStudentId === studentId) {
+            const remaining = students.filter(s => s.id !== studentId);
+            setSelectedStudentId(remaining.length > 0 ? remaining[0].id : '');
+          }
+          triggerSaveNotice('✓ 學生及相關紀錄已刪除');
+        }
+      };
+
+      // 清空全班
+      const handleClearAllStudents = () => {
+        if (confirm('警告：確定要清空所有學生與輔導紀錄嗎？此動作不可撤銷。')) {
+          setStudents([]);
+          setRecords([]);
+          setSelectedStudentId('');
+          triggerSaveNotice('✓ 資料已清空');
+        }
+      };
+
+      // 匯出 CSV 備份
+      const handleExportCSV = () => {
+        if (records.length === 0) return alert('尚無紀錄可匯出');
+        let csvContent = "\uFEFF座號,姓名,日期,時間,情境節次,行為描述,教師處置,學生反應,備註\n";
+        records.forEach(r => {
+          const s = students.find(st => st.id === r.studentId);
+          const num = s ? s.number : '已刪除';
+          const name = s ? s.name : '已刪除';
+          csvContent += `"${num}","${name}","${r.date}","${r.time}","${r.setting}","${(r.behavior||'').replace(/"/g, '""')}","${(r.action||'').replace(/"/g, '""')}","${(r.result||'').replace(/"/g, '""')}","${(r.notes||'').replace(/"/g, '""')}"\n`;
+        });
+
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = `學生行為輔導紀錄表_${new Date().toISOString().split('T')[0]}.csv`;
+        link.click();
+      };
+
+      const selectedStudent = students.find(s => s.id === selectedStudentId);
+      const filteredRecords = useMemo(() => {
+        return records.filter(r => {
+          const s = students.find(st => st.id === r.studentId);
+          const nameMatch = s ? s.name.includes(searchQuery) || s.number.includes(searchQuery) : false;
+          const behaviorMatch = r.behavior.includes(searchQuery);
+          const settingMatch = filterSetting === '全區' || r.setting === filterSetting;
+          return (nameMatch || behaviorMatch) && settingMatch;
+        });
+      }, [records, students, searchQuery, filterSetting]);
+
+      return (
+        <div class="max-w-6xl mx-auto p-4 md:p-6">
+          {/* Header 頂部欄 */}
+          <header class="flex flex-col md:flex-row justify-between items-start md:items-center bg-slate-800 text-white p-5 rounded-2xl shadow-md mb-6 no-print gap-4">
+            <div>
+              <div class="flex items-center gap-2">
+                <h1 class="text-2xl font-bold tracking-wide">學生行為觀察與輔導紀錄系統</h1>
+                <span class="bg-emerald-600 text-white text-xs px-2 py-0.5 rounded-full font-normal">本機極速版</span>
+              </div>
+              <p class="text-xs text-slate-300 mt-1">資料 100% 保存在您的電腦瀏覽器 (localStorage)，安全無個資外洩疑慮</p>
+            </div>
+            
+            <div class="flex flex-wrap items-center gap-2 w-full md:w-auto justify-between md:justify-end">
+              {saveStatus && <span class="bg-emerald-700 text-emerald-100 text-xs px-3 py-1.5 rounded-lg font-medium animate-pulse">{saveStatus}</span>}
+              <nav class="flex bg-slate-700 p-1 rounded-xl text-xs font-medium">
+                <button onClick={() => setActiveTab('record')} class={`px-3 py-2 rounded-lg transition ${activeTab==='record'?'bg-emerald-600 text-white shadow':'text-slate-300 hover:text-white'}`}>📝 新增觀察</button>
+                <button onClick={() => setActiveTab('history')} class={`px-3 py-2 rounded-lg transition ${activeTab==='history'?'bg-emerald-600 text-white shadow':'text-slate-300 hover:text-white'}`}>📋 歷史總覽</button>
+                <button onClick={() => setActiveTab('report')} class={`px-3 py-2 rounded-lg transition ${activeTab==='report'?'bg-emerald-600 text-white shadow':'text-slate-300 hover:text-white'}`}>🖨️ 轉介表單</button>
+                <button onClick={() => setActiveTab('students')} class={`px-3 py-2 rounded-lg transition ${activeTab==='students'?'bg-emerald-600 text-white shadow':'text-slate-300 hover:text-white'}`}>👥 名單管理</button>
+              </nav>
+            </div>
+          </header>
+
+          {/* TAB 1: 新增觀察紀錄 */}
+          {activeTab === 'record' && (
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+              {/* 左側選單 */}
+              <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+                <h2 class="font-bold text-slate-700 mb-3 flex items-center gap-2">
+                  <span>選擇學生</span>
+                </h2>
+                {students.length === 0 ? (
+                  <p class="text-xs text-amber-700 bg-amber-50 p-3 rounded-xl border border-amber-200">
+                    目前名單空白，請切換至右上角「👥 名單管理」建立全班學生名單。
+                  </p>
+                ) : (
+                  <select 
+                    value={selectedStudentId} 
+                    onChange={e => setSelectedStudentId(e.target.value)}
+                    class="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold text-slate-800 mb-4 focus:ring-2 focus:ring-emerald-500 outline-none"
+                  >
+                    {students.map(s => (
+                      <option key={s.id} value={s.id}>{s.number}號 {s.name}</option>
+                    ))}
+                  </select>
+                )}
+
+                {selectedStudent && (
+                  <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs space-y-2">
+                    <div class="text-slate-500">目前選擇個案：</div>
+                    <div class="text-base font-bold text-slate-800">{selectedStudent.number}號 {selectedStudent.name} ({selectedStudent.gender})</div>
+                    <hr/>
+                    <div class="text-slate-500">此學生已累積：<span class="font-bold text-emerald-700 text-sm">{records.filter(r=>r.studentId===selectedStudent.id).length}</span> 筆紀錄</div>
+                  </div>
+                )}
+              </div>
+
+              {/* 右側表單 */}
+              <div class="md:col-span-3 bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-5">
+                <h2 class="text-lg font-bold text-slate-800 border-b pb-3">登錄輔導與觀察數據</h2>
+                
+                <form onSubmit={handleAddRecord} class="space-y-4">
+                  <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div>
+                      <label class="block text-xs font-semibold text-slate-600 mb-1">日期</label>
+                      <input type="date" value={date} onChange={e=>setDate(e.target.value)} class="w-full p-2.5 border rounded-xl text-sm bg-slate-50" />
+                    </div>
+                    <div>
+                      <label class="block text-xs font-semibold text-slate-600 mb-1">時間</label>
+                      <input type="time" value={time} onChange={e=>setTime(e.target.value)} class="w-full p-2.5 border rounded-xl text-sm bg-slate-50" />
+                    </div>
+                    <div>
+                      <label class="block text-xs font-semibold text-slate-600 mb-1">情境 / 節次</label>
+                      <input type="text" value={setting} onChange={e=>setSetting(e.target.value)} placeholder="如：國語課、午休時間" class="w-full p-2.5 border rounded-xl text-sm bg-slate-50" />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">具體客觀行為描述 *</label>
+                    <textarea value={behavior} onChange={e=>setBehavior(e.target.value)} rows="3" placeholder="請填寫時間、地點、具體事件與次數（例如：上課40分鐘有30分鐘離座，走至講台前模仿老師說話...）" class="w-full p-3 border rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 outline-none"></textarea>
+                    
+                    {/* 一鍵填寫標籤 */}
+                    <div class="mt-2 flex flex-wrap gap-1.5">
+                      <span class="text-xs text-slate-400 py-1">常用帶入：</span>
+                      {quickBehaviors.map((qb, idx) => (
+                        <button key={idx} type="button" onClick={()=>setBehavior(b=>b?b+' '+qb:qb)} class="text-xs bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 text-slate-600 px-2.5 py-1 rounded-lg border border-slate-200 transition">
+                          + {qb.slice(0, 8)}...
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label class="block text-xs font-semibold text-slate-600 mb-1">教師即時處置 / 輔導策略</label>
+                      <textarea value={action} onChange={e=>setAction(e.target.value)} rows="2" placeholder="採手勢提醒靜音、鋪設軟墊降噪、賦予小幫手任務..." class="w-full p-2.5 border rounded-xl text-sm"></textarea>
+                      <div class="mt-1 flex flex-wrap gap-1">
+                        {quickActions.slice(0, 3).map((qa, idx) => (
+                          <button key={idx} type="button" onClick={()=>setAction(a=>a?a+' '+qa:qa)} class="text-[11px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded border">
+                            + {qa.slice(0, 6)}...
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <label class="block text-xs font-semibold text-slate-600 mb-1">處置後學生反應與結果</label>
+                      <textarea value={result} onChange={e=>setResult(e.target.value)} rows="2" placeholder="敲擊聲降低，但自控維持時間約3-5分鐘..." class="w-full p-2.5 border rounded-xl text-sm"></textarea>
+                    </div>
+                  </div>
+
+                  <button type="submit" disabled={!selectedStudent} class={`w-full py-3 rounded-xl font-bold text-white shadow-md transition ${selectedStudent ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-slate-300 cursor-not-allowed'}`}>
+                    儲存輔導觀察紀錄
+                  </button>
+                </form>
+
+                {/* 該生歷史觀察簡覽 */}
+                {selectedStudent && (
+                  <div class="mt-6 pt-6 border-t">
+                    <h3 class="font-bold text-slate-700 mb-3 text-sm">【{selectedStudent.name}】最近紀錄</h3>
+                    <div class="space-y-2 max-h-56 overflow-y-auto">
+                      {records.filter(r=>r.studentId===selectedStudent.id).length === 0 ? (
+                        <p class="text-xs text-slate-400">該生目前尚無紀錄</p>
+                      ) : (
+                        records.filter(r=>r.studentId===selectedStudent.id).map(r => (
+                          <div key={r.id} class="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs flex justify-between items-start">
+                            <div>
+                              <span class="font-bold text-emerald-800">{r.date} ({r.setting})</span>
+                              <p class="text-slate-700 mt-1"><strong>行為：</strong>{r.behavior}</p>
+                              {r.action && <p class="text-slate-500"><strong>處置：</strong>{r.action}</p>}
+                            </div>
+                            <button onClick={()=>handleDeleteRecord(r.id)} class="text-red-500 hover:underline text-[11px] ml-2">刪除</button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* TAB 2: 歷史紀錄總覽 */}
+          {activeTab === 'history' && (
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-4">
+              <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div>
+                  <h2 class="text-lg font-bold text-slate-800">全班輔導觀察歷史總覽</h2>
+                  <p class="text-xs text-slate-500">共累積 {records.length} 筆紀錄</p>
+                </div>
+                <div class="flex flex-wrap gap-2 w-full md:w-auto">
+                  <input type="text" placeholder="搜尋學生姓名/座號/行為..." value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} class="p-2 border rounded-xl text-xs w-48 outline-none focus:ring-2 focus:ring-emerald-500"/>
+                  <button onClick={handleExportCSV} class="bg-slate-700 hover:bg-slate-800 text-white text-xs px-3 py-2 rounded-xl font-medium">📥 匯出 CSV 檔</button>
+                </div>
+              </div>
+
+              <div class="overflow-x-auto border rounded-xl">
+                <table class="w-full text-xs text-left">
+                  <thead class="bg-slate-100 text-slate-700 font-bold border-b">
+                    <tr>
+                      <th class="p-3">日期時間</th>
+                      <th class="p-3">學生</th>
+                      <th class="p-3">情境</th>
+                      <th class="p-3">具體行為描述</th>
+                      <th class="p-3">教師處置</th>
+                      <th class="p-3">處置結果</th>
+                      <th class="p-3 text-center">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y">
+                    {filteredRecords.length === 0 ? (
+                      <tr><td colSpan="7" class="p-6 text-center text-slate-400">無符合條件的輔導紀錄</td></tr>
+                    ) : (
+                      filteredRecords.map(r => {
+                        const s = students.find(st => st.id === r.studentId);
+                        return (
+                          <tr key={r.id} class="hover:bg-slate-50">
+                            <td class="p-3 font-mono text-slate-600 whitespace-nowrap">{r.date}<br/>{r.time}</td>
+                            <td class="p-3 font-bold text-slate-800 whitespace-nowrap">{s ? `${s.number}號 ${s.name}` : '已移除學生'}</td>
+                            <td class="p-3 text-slate-600 whitespace-nowrap">{r.setting}</td>
+                            <td class="p-3 text-slate-800 max-w-xs">{r.behavior}</td>
+                            <td class="p-3 text-slate-600 max-w-xs">{r.action || '-'}</td>
+                            <td class="p-3 text-slate-600 max-w-xs">{r.result || '-'}</td>
+                            <td class="p-3 text-center">
+                              <button onClick={()=>handleDeleteRecord(r.id)} class="text-red-500 hover:underline">刪除</button>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 3: 列印個案轉介單 */}
+          {activeTab === 'report' && (
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-4">
+              <div class="flex justify-between items-center no-print border-b pb-4">
+                <div>
+                  <h2 class="text-lg font-bold text-slate-800">產生輔導室/特教轉介觀察摘要</h2>
+                  <p class="text-xs text-slate-500">選擇學生即可自動打包整理該生的歷史行為紀錄，方便列印</p>
+                </div>
+                <div class="flex items-center gap-3">
+                  <select value={selectedStudentId} onChange={e=>setSelectedStudentId(e.target.value)} class="p-2 border rounded-xl text-xs font-bold">
+                    {students.map(s => <option key={s.id} value={s.id}>{s.number}號 {s.name}</option>)}
+                  </select>
+                  <button onClick={() => window.print()} class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-4 py-2 rounded-xl font-bold shadow">🖨️ 列印 / 存為 PDF</button>
+                </div>
+              </div>
+
+              {/* 列印區域 */}
+              <div id="print-area" class="p-6 border rounded-xl bg-white space-y-6">
+                <div class="text-center border-b pb-4">
+                  <h1 class="text-xl font-bold text-slate-900">臺北市松山區西松國民小學 學生行為觀察與輔導轉介摘要表</h1>
+                  <p class="text-xs text-slate-500 mt-1">填表日期：{new Date().toISOString().split('T')[0]} | 導師觀察記錄</p>
+                </div>
+
+                {selectedStudent ? (
+                  <>
+                    <div class="grid grid-cols-3 border rounded-lg p-3 text-xs bg-slate-50 gap-2">
+                      <div><strong>學生姓名：</strong>{selectedStudent.name}</div>
+                      <div><strong>座號：</strong>{selectedStudent.number} 號</div>
+                      <div><strong>性別：</strong>{selectedStudent.gender}</div>
+                    </div>
+
+                    <div>
+                      <h3 class="font-bold text-xs text-slate-700 mb-2">一、 具體客觀觀察紀錄明細（按時間排序）：</h3>
+                      <table class="w-full text-xs border-collapse border border-slate-300">
+                        <thead>
+                          <tr class="bg-slate-100">
+                            <th class="border border-slate-300 p-2">日期 / 節次</th>
+                            <th class="border border-slate-300 p-2">客觀行為描述</th>
+                            <th class="border border-slate-300 p-2">教師輔導與介入策略</th>
+                            <th class="border border-slate-300 p-2">成效與結果</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {records.filter(r=>r.studentId===selectedStudent.id).length === 0 ? (
+                            <tr><td colSpan="4" class="p-4 text-center text-slate-400">目前尚無輔導紀錄</td></tr>
+                          ) : (
+                            records.filter(r=>r.studentId===selectedStudent.id).map(r => (
+                              <tr key={r.id}>
+                                <td class="border border-slate-300 p-2 whitespace-nowrap">{r.date}<br/>({r.setting})</td>
+                                <td class="border border-slate-300 p-2">{r.behavior}</td>
+                                <td class="border border-slate-300 p-2">{r.action || '無'}</td>
+                                <td class="border border-slate-300 p-2">{r.result || '無'}</td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div class="border-t pt-4 text-xs space-y-2">
+                      <h3 class="font-bold text-slate-700">二、 導師綜合評估與建議：</h3>
+                      <p class="text-slate-600">學生在課堂持續專注度、衝動控制與感覺統合方面有較高輔導需求。已嘗試運用座位調整、視覺提示與正當離座任務，改善幅度有限。建議擬請輔導室/專輔進行入班觀察，並協助親師溝通引導醫療診斷評估。</p>
+                    </div>
+
+                    <div class="flex justify-between pt-8 text-xs font-bold text-slate-700">
+                      <div>導師簽章：__________________</div>
+                      <div>輔導組長簽章：__________________</div>
+                    </div>
+                  </>
+                ) : (
+                  <p class="text-center text-slate-400 p-8">請選擇一位學生以檢視轉介表單</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* TAB 4: 名單管理 (可修改/刪除/整批上傳) */}
+          {activeTab === 'students' && (
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-6">
+              <div>
+                <h2 class="text-lg font-bold text-slate-800">全班學生名單管理</h2>
+                <p class="text-xs text-slate-500">點選學生右側的「編輯」即可修改座號與姓名；修改時系統會自動確保座號不重複。</p>
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* 批量上傳 */}
+                <div class="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                  <label class="block text-xs font-bold text-slate-700 mb-2">整批上傳 / 貼上名單（每行格式：座號 姓名）：</label>
+                  <textarea 
+                    value={batchText} 
+                    onChange={e=>setBatchText(e.target.value)}
+                    placeholder="01 張小明&#10;02 李大華&#10;03 王小美" 
+                    rows="8"
+                    class="w-full p-3 border rounded-xl text-xs font-mono outline-none focus:ring-2 focus:ring-emerald-500"
+                  ></textarea>
+                  <button 
+                    onClick={handleParseBatch}
+                    class="mt-3 w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-2.5 rounded-xl text-xs transition shadow">
+                    解析並覆蓋全班名單
+                  </button>
+                </div>
+
+                {/* 名單清單與單一編輯區 */}
+                <div>
+                  <div class="flex justify-between items-center mb-2">
+                    <span class="text-xs font-bold text-slate-700">班級學生清單（共 {students.length} 人）：</span>
+                    {students.length > 0 && (
+                      <button onClick={handleClearAllStudents} class="text-xs text-red-600 hover:underline">
+                        清空所有人
+                      </button>
+                    )}
+                  </div>
+
+                  <div class="border rounded-xl max-h-80 overflow-y-auto divide-y bg-white">
+                    {students.length === 0 ? (
+                      <div class="p-6 text-center text-xs text-slate-400">目前尚無學生資料</div>
+                    ) : (
+                      students.map(s => (
+                        <div key={s.id} class="p-3 flex justify-between items-center hover:bg-slate-50">
+                          {editingStudentId === s.id ? (
+                            /* 行內編輯狀態 */
+                            <div class="flex items-center gap-2 w-full">
+                              <input 
+                                type="text" 
+                                value={editNumber} 
+                                onChange={e=>setEditNumber(e.target.value)}
+                                class="w-14 p-1 border rounded text-xs font-bold text-center"
+                                placeholder="座號"
+                              />
+                              <input 
+                                type="text" 
+                                value={editName} 
+                                onChange={e=>setEditName(e.target.value)}
+                                class="flex-1 p-1 border rounded text-xs font-bold"
+                                placeholder="姓名"
+                              />
+                              <button 
+                                onClick={() => handleSaveEditStudent(s.id)}
+                                class="text-xs bg-emerald-600 text-white px-2.5 py-1 rounded-lg hover:bg-emerald-700 font-bold">
+                                儲存
+                              </button>
+                              <button 
+                                onClick={() => setEditingStudentId(null)}
+                                class="text-xs bg-slate-200 text-slate-600 px-2.5 py-1 rounded-lg hover:bg-slate-300">
+                                取消
+                              </button>
+                            </div>
+                          ) : (
+                            /* 正常顯示狀態 */
+                            <>
+                              <span class="text-xs font-bold text-slate-700">{s.number} 號 - {s.name}</span>
+                              <div class="flex gap-2">
+                                <button 
+                                  onClick={() => handleStartEditStudent(s)}
+                                  class="text-xs bg-emerald-50 text-emerald-700 hover:bg-emerald-100 px-2.5 py-1 rounded-lg font-medium transition">
+                                  編輯
+                                </button>
+                                <button 
+                                  onClick={() => handleDeleteStudent(s.id, s.name)}
+                                  class="text-xs bg-red-50 text-red-600 hover:bg-red-100 px-2.5 py-1 rounded-lg font-medium transition">
+                                  刪除
+                                </button>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
